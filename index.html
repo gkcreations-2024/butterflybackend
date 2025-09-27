@@ -711,6 +711,79 @@ submitOrderBtn.addEventListener("click", async (e) => {
         }
       });
     </script>
+    <script>
+      // API endpoint to submit order
+app.post('https://butterflybackend.onrender.com/api/submit-order', async (req, res) => {
+  try {
+    const { cart = [], customer = {} } = req.body;
+
+    // Basic validations
+    if (!Array.isArray(cart) || cart.length === 0) {
+      return res.status(400).json({ error: 'Cart is empty' });
+    }
+    if (!customer || !customer.email || !customer.name || !customer.phone) {
+      return res.status(400).json({ error: 'Missing customer details' });
+    }
+
+    // compute totals
+    let netTotal = 0;
+    cart.forEach(item => {
+      netTotal += (parseFloat(item.price || 0) * parseInt(item.qty || 0));
+    });
+
+    const order = {
+      orderId: 'ORD-' + Date.now(),
+      items: cart,
+      customer,
+      netTotal
+    };
+
+    // create PDF buffer
+    const pdfBuffer = await createInvoicePdfBuffer(order);
+    const pdfBase64 = pdfBuffer.toString('base64'); // Resend requires base64 for attachments
+
+    // send emails using Resend
+    await Promise.all([
+      // To seller
+      resend.emails.send({
+        from: `${process.env.FROM_NAME} <${process.env.SMTP_USER}>`,
+        to: process.env.SELLER_EMAIL,
+        subject: `New Order ${order.orderId} - ₹${netTotal}`,
+        text: `New order received.\nOrder ID: ${order.orderId}\nCustomer: ${customer.name}\nNet Total: ₹${netTotal}`,
+        attachments: [
+          {
+            name: `${order.orderId}.pdf`,
+            data: pdfBase64,
+            type: "application/pdf"
+          }
+        ]
+      }),
+      // To customer
+      resend.emails.send({
+        from: `${process.env.FROM_NAME} <${process.env.SMTP_USER}>`,
+        to: customer.email,
+        subject: `Your Order Confirmation ${order.orderId}`,
+        text: `Thanks for ordering from Butterfly Crackers.\nOrder ID: ${order.orderId}\nNet Total: ₹${netTotal}`,
+        attachments: [
+          {
+            name: `${order.orderId}.pdf`,
+            data: pdfBase64,
+            type: "application/pdf"
+          }
+        ]
+      })
+    ]);
+
+    // respond success
+    res.json({ success: true, orderId: order.orderId, netTotal });
+
+  } catch (err) {
+    console.error('submit-order error', err);
+    res.status(500).json({ error: 'Failed to submit order', details: err.message });
+  }
+});
+
+    </script>
     <!-- <script src="./server.js"></script> -->
   </body>
 </html>
