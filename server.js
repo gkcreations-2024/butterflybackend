@@ -21,15 +21,11 @@ app.get("/", (req, res) => {
 });
 
 // Setup nodemailer transport
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: parseInt(process.env.SMTP_PORT || "587"),
-  secure: false, // true for 465, false for other ports
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS
-  }
-});
+// Resend API client
+const { Resend } = require("resend");
+const resend = new Resend(process.env.RESEND_API_KEY);
+
+
 
 function createInvoicePdfBuffer(order) {
   return new Promise((resolve, reject) => {
@@ -173,7 +169,7 @@ function createInvoicePdfBuffer(order) {
 
 
 // API endpoint to submit order
-app.post('/api/submit-order', async (req, res) => {
+app.post('https://butterflybackend.onrender.com/api/submit-order', async (req, res) => {
   try {
     const { cart = [], customer = {} } = req.body;
 
@@ -191,12 +187,6 @@ app.post('/api/submit-order', async (req, res) => {
       netTotal += (parseFloat(item.price || 0) * parseInt(item.qty || 0));
     });
 
-    if (netTotal < 3000) {
-      // still allow but respond with a warning — frontend also checks
-      // you may choose to reject instead
-      // return res.status(400).json({ error: 'Minimum order value is ₹3000' });
-    }
-
     const order = {
       orderId: 'ORD-' + Date.now(),
       items: cart,
@@ -206,31 +196,39 @@ app.post('/api/submit-order', async (req, res) => {
 
     // create PDF buffer
     const pdfBuffer = await createInvoicePdfBuffer(order);
+    const pdfBase64 = pdfBuffer.toString('base64'); // Resend requires base64 for attachments
 
-    // mail options (send to seller + customer)
-    const sellerMailOptions = {
-      from: `"${process.env.FROM_NAME}" <${process.env.SMTP_USER}>`,
-      to: process.env.SELLER_EMAIL,
-      subject: `New Order ${order.orderId} - ₹${netTotal}`,
-      text: `New order received.\nOrder ID: ${order.orderId}\nCustomer: ${customer.name}\nNet Total: ₹${netTotal}`,
-      attachments: [
-        { filename: `${order.orderId}.pdf`, content: pdfBuffer }
-      ]
-    };
-
-    const customerMailOptions = {
-      from: `"${process.env.FROM_NAME}" <${process.env.SMTP_USER}>`,
-      to: customer.email,
-      subject: `Your Order Confirmation ${order.orderId}`,
-      text: `Thanks for ordering from Butterfly Crackers.\nOrder ID: ${order.orderId}\nNet Total: ₹${netTotal}`,
-      attachments: [
-        { filename: `${order.orderId}.pdf`, content: pdfBuffer }
-      ]
-    };
-
-    // send both mails in parallel
-    await transporter.sendMail(sellerMailOptions);
-    await transporter.sendMail(customerMailOptions);
+    // send emails using Resend
+    await Promise.all([
+      // To seller
+      resend.emails.send({
+        from: `${process.env.FROM_NAME} <${process.env.SMTP_USER}>`,
+        to: process.env.SELLER_EMAIL,
+        subject: `New Order ${order.orderId} - ₹${netTotal}`,
+        text: `New order received.\nOrder ID: ${order.orderId}\nCustomer: ${customer.name}\nNet Total: ₹${netTotal}`,
+        attachments: [
+          {
+            name: `${order.orderId}.pdf`,
+            data: pdfBase64,
+            type: "application/pdf"
+          }
+        ]
+      }),
+      // To customer
+      resend.emails.send({
+        from: `${process.env.FROM_NAME} <${process.env.SMTP_USER}>`,
+        to: customer.email,
+        subject: `Your Order Confirmation ${order.orderId}`,
+        text: `Thanks for ordering from Butterfly Crackers.\nOrder ID: ${order.orderId}\nNet Total: ₹${netTotal}`,
+        attachments: [
+          {
+            name: `${order.orderId}.pdf`,
+            data: pdfBase64,
+            type: "application/pdf"
+          }
+        ]
+      })
+    ]);
 
     // respond success
     res.json({ success: true, orderId: order.orderId, netTotal });
