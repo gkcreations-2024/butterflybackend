@@ -169,7 +169,7 @@ function createInvoicePdfBuffer(order) {
 
 
 // API endpoint to submit order
-app.post('https://butterflybackend.onrender.com/api/submit-order', async (req, res) => {
+app.post('/api/submit-order', async (req, res) => {
   try {
     const { cart = [], customer = {} } = req.body;
 
